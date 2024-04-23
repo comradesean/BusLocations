@@ -110,7 +110,6 @@ namespace BusLocations
             else if (Game1.player.Money < Locations[index].TicketPrice)
                 Game1.drawObjectDialogue(Game1.content.LoadString("Strings\\Locations:BusStop_NotEnoughMoneyForTicket"));
             else
-                Game1.drawObjectDialogue(Game1.content.LoadString("Strings\\Locations:BusStop_NoDriver"));
                 Game1.player.Money -= Locations[index].TicketPrice;
                 Game1.player.Halt();
                 Game1.player.freezePause = 700;
