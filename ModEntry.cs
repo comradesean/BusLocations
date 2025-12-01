@@ -1,6 +1,6 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewModdingAPI.Events;
@@ -90,11 +90,20 @@ namespace BusLocations
             foreach (var pack in helper.ContentPacks.GetOwned())
             {
                 this.Monitor.Log($"Reading content pack: {pack.Manifest.Name} {pack.Manifest.Version} from {pack.DirectoryPath}");
-                this.LoadDestinationsFromPack(
-                    pack.ReadJsonFile<BusDestinationPack>("content.json"),
-                    pack.ReadJsonFile<BusDestination>("content.json"),
-                    destinations
-                );
+
+                try
+                {
+                    this.LoadDestinationsFromPack(
+                        pack.ReadJsonFile<BusDestinationPack>("content.json"),
+                        pack.ReadJsonFile<BusDestination>("content.json"),
+                        destinations,
+                        pack.Manifest.Name
+                    );
+                }
+                catch (Exception ex)
+                {
+                    this.Monitor.Log($"Failed to load content pack '{pack.Manifest.Name}': {ex.Message}", LogLevel.Error);
+                }
             }
 
             // Load from nested folders (e.g., "[BL] Desert" folder inside this mod)
@@ -105,18 +114,31 @@ namespace BusLocations
                 if (!File.Exists(contentFilePath))
                     continue;
 
-                this.Monitor.Log($"Reading nested content pack from {directory}");
-                var relativePath = Path.Combine(Path.GetFileName(directory), "content.json");
+                var folderName = Path.GetFileName(directory);
+                this.Monitor.Log($"Reading nested content pack from {folderName}");
+                var relativePath = Path.Combine(folderName, "content.json");
 
-                this.LoadDestinationsFromPack(
-                    helper.Data.ReadJsonFile<BusDestinationPack>(relativePath),
-                    helper.Data.ReadJsonFile<BusDestination>(relativePath),
-                    destinations
-                );
+                try
+                {
+                    this.LoadDestinationsFromPack(
+                        helper.Data.ReadJsonFile<BusDestinationPack>(relativePath),
+                        helper.Data.ReadJsonFile<BusDestination>(relativePath),
+                        destinations,
+                        folderName
+                    );
+                }
+                catch (Exception ex)
+                {
+                    this.Monitor.Log($"Failed to load nested content pack '{folderName}': {ex.Message}", LogLevel.Error);
+                }
             }
 
             this.Destinations = destinations.ToArray();
-            this.Monitor.Log($"Loaded {this.Destinations.Length} bus destination(s)");
+
+            if (this.Destinations.Length == 0)
+                this.Monitor.Log("No bus destinations were loaded. Make sure you have content packs installed or the [BL] Desert folder is present.", LogLevel.Warn);
+            else
+                this.Monitor.Log($"Loaded {this.Destinations.Length} bus destination(s)");
         }
 
         /// <summary>
@@ -128,13 +150,17 @@ namespace BusLocations
         /// <param name="pack">Parsed multi-destination format (may be null if JSON doesn't match).</param>
         /// <param name="single">Parsed single-destination format (may be null if JSON doesn't match).</param>
         /// <param name="destinations">The list to add successfully parsed destinations to.</param>
-        private void LoadDestinationsFromPack(BusDestinationPack? pack, BusDestination? single, List<BusDestination> destinations)
+        /// <param name="sourceName">Name of the content pack source for logging purposes.</param>
+        private void LoadDestinationsFromPack(BusDestinationPack? pack, BusDestination? single, List<BusDestination> destinations, string sourceName)
         {
             // Prefer the new multi-destination format
             if (pack?.Locations?.Count > 0)
             {
                 foreach (var destination in pack.Locations)
-                    destinations.Add(destination);
+                {
+                    if (this.ValidateDestination(destination, sourceName))
+                        destinations.Add(destination);
+                }
                 return;
             }
 
@@ -142,8 +168,38 @@ namespace BusLocations
             // Check MapName to distinguish between an actual destination and a failed parse
             if (single != null && !string.IsNullOrEmpty(single.MapName))
             {
-                destinations.Add(single);
+                if (this.ValidateDestination(single, sourceName))
+                    destinations.Add(single);
+                return;
             }
+
+            // Neither format matched - log a warning
+            this.Monitor.Log($"Could not parse content.json from '{sourceName}'. Expected 'locations' array or single destination with 'mapname'.", LogLevel.Warn);
+        }
+
+        /// <summary>
+        /// Validates that a destination has all required fields populated.
+        /// </summary>
+        /// <param name="destination">The destination to validate.</param>
+        /// <param name="sourceName">Name of the content pack source for logging purposes.</param>
+        /// <returns>True if valid, false otherwise.</returns>
+        private bool ValidateDestination(BusDestination destination, string sourceName)
+        {
+            var errors = new List<string>();
+
+            if (string.IsNullOrWhiteSpace(destination.MapName))
+                errors.Add("mapname is missing or empty");
+
+            if (string.IsNullOrWhiteSpace(destination.DisplayName))
+                errors.Add("displayname is missing or empty");
+
+            if (errors.Count > 0)
+            {
+                this.Monitor.Log($"Invalid destination in '{sourceName}': {string.Join(", ", errors)}. Skipping.", LogLevel.Warn);
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>
@@ -164,7 +220,7 @@ namespace BusLocations
                 ));
             }
 
-            choices.Add(new Response("Cancel", "Cancel"));
+            choices.Add(new Response("Cancel", this.Helper.Translation.Get("menu.cancel")));
             this.DestinationChoices = choices.ToArray();
         }
 
@@ -180,6 +236,11 @@ namespace BusLocations
         /// We can't simply add our own interaction - we must prevent the vanilla code
         /// from running first. By suppressing action buttons BEFORE they're processed,
         /// we ensure the vanilla bus code never sees the player trying to interact.
+        ///
+        /// SPLIT-SCREEN NOTE:
+        /// In split-screen mode, this event fires once per screen per tick. SMAPI automatically
+        /// swaps game context (Game1.player, Game1.currentLocation, etc.) for each screen,
+        /// so our checks naturally apply to the correct player.
         /// </summary>
         private void OnUpdateTicking(object? sender, UpdateTickingEventArgs e)
         {
@@ -221,20 +282,32 @@ namespace BusLocations
         /// Callback invoked when the player selects a destination from the menu.
         /// Validates the selection, checks requirements, and warps the player.
         /// </summary>
-        /// <param name="who">The player who made the selection (unused but required by delegate signature).</param>
+        /// <param name="who">The player who made the selection.</param>
         /// <param name="selectedKey">The response key - either a destination index or "Cancel".</param>
         private void OnDestinationSelected(Farmer who, string selectedKey)
         {
             if (selectedKey == "Cancel")
                 return;
 
-            int destinationIndex = int.Parse(selectedKey);
+            // Defensive validation for the selection
+            if (!int.TryParse(selectedKey, out int destinationIndex))
+            {
+                this.Monitor.Log($"Invalid destination selection key: {selectedKey}", LogLevel.Warn);
+                return;
+            }
+
+            if (destinationIndex < 0 || destinationIndex >= this.Destinations.Length)
+            {
+                this.Monitor.Log($"Destination index out of range: {destinationIndex}", LogLevel.Warn);
+                return;
+            }
+
             var destination = this.Destinations[destinationIndex];
 
-            if (!this.ValidateTravelRequirements(destination))
+            if (!this.ValidateTravelRequirements(who, destination))
                 return;
 
-            this.WarpPlayerToDestination(destination);
+            this.WarpPlayerToDestination(who, destination);
         }
 
 
@@ -242,17 +315,26 @@ namespace BusLocations
         ** Private methods - Helpers
         *********/
         /// <summary>
-        /// Checks if the game state allows world interactions.
-        /// We should not intercept inputs when the world isn't loaded or when
-        /// menus/dialogues are open (those have their own input handling).
+        /// Checks if the game state allows world interactions for the current screen's player.
+        /// We should not intercept inputs when the world isn't loaded, when menus/dialogues
+        /// are open, or when the player is otherwise not free to act.
         /// </summary>
+        /// <remarks>
+        /// Context.IsPlayerFree is the recommended SMAPI check that accounts for:
+        /// - World not ready
+        /// - Active menus or dialogues
+        /// - Cutscenes or events
+        /// - Player is frozen or otherwise unable to act
+        /// This works correctly in split-screen as SMAPI scopes Context to the current screen.
+        /// </remarks>
         private bool CanInteractWithWorld()
         {
-            if (!Context.IsWorldReady)
+            // Context.IsPlayerFree handles all the common "can the player act?" checks
+            if (!Context.IsPlayerFree)
                 return false;
 
-            // Don't interfere when menus or dialogues are active
-            if (Game1.activeClickableMenu != null || Game1.dialogueUp)
+            // Additional null safety for the current location
+            if (Game1.currentLocation == null)
                 return false;
 
             return true;
@@ -302,36 +384,43 @@ namespace BusLocations
             return isCorrectX && isCorrectY;
         }
 
-        /// <summary>Shows the destination selection dialogue or an "out of service" message.</summary>
+        /// <summary>Shows the destination selection dialogue or an appropriate error message.</summary>
         private void ShowDestinationMenu()
         {
             // The Vault bundle completion unlocks the bus in vanilla Stardew Valley.
             // We check the host player's mail since they control world progression.
             bool busIsRepaired = Game1.MasterPlayer.mailReceived.Contains(VaultCompletedMailFlag);
 
-            if (busIsRepaired)
+            if (!busIsRepaired)
             {
-                Game1.currentLocation.createQuestionDialogue(
-                    "Where would you like to go?",
-                    this.DestinationChoices,
-                    this.OnDestinationSelected
-                );
+                Game1.drawObjectDialogue(this.Helper.Translation.Get("message.out-of-service"));
+                return;
             }
-            else
+
+            if (this.Destinations.Length == 0)
             {
-                Game1.drawObjectDialogue("Out of service");
+                Game1.drawObjectDialogue(this.Helper.Translation.Get("message.no-destinations"));
+                return;
             }
+
+            Game1.currentLocation.createQuestionDialogue(
+                this.Helper.Translation.Get("menu.question"),
+                this.DestinationChoices,
+                this.OnDestinationSelected
+            );
         }
 
         /// <summary>
         /// Validates that all requirements are met before allowing travel.
         /// Shows appropriate error messages if requirements aren't met.
         /// </summary>
+        /// <param name="who">The player attempting to travel.</param>
+        /// <param name="destination">The destination to validate against.</param>
         /// <returns>True if travel is allowed, false otherwise.</returns>
-        private bool ValidateTravelRequirements(BusDestination destination)
+        private bool ValidateTravelRequirements(Farmer who, BusDestination destination)
         {
-            // Check funds
-            if (Game1.player.Money < destination.TicketPrice)
+            // Check funds using the specific player who is traveling
+            if (who.Money < destination.TicketPrice)
             {
                 Game1.drawObjectDialogue(
                     Game1.content.LoadString("Strings\\Locations:BusStop_NotEnoughMoneyForTicket")
@@ -342,7 +431,7 @@ namespace BusLocations
             // Optionally require Pam to be at her driving position
             if (this.Config.RequirePam && !this.IsPamAtBusStop())
             {
-                Game1.drawObjectDialogue("The bus driver is not here.");
+                Game1.drawObjectDialogue(this.Helper.Translation.Get("message.no-driver"));
                 return false;
             }
 
@@ -364,15 +453,20 @@ namespace BusLocations
             return pam.Tile == new Vector2(PamStandingTileX, PamStandingTileY);
         }
 
-        /// <summary>Warps the player to the selected destination after deducting the ticket cost.</summary>
-        private void WarpPlayerToDestination(BusDestination destination)
+        /// <summary>Warps the specified player to the selected destination after deducting the ticket cost.</summary>
+        /// <param name="who">The player to warp.</param>
+        /// <param name="destination">The destination to warp to.</param>
+        private void WarpPlayerToDestination(Farmer who, BusDestination destination)
         {
-            Game1.player.Money -= destination.TicketPrice;
+            who.Money -= destination.TicketPrice;
 
             // Halt movement and briefly freeze to smooth the transition
-            Game1.player.Halt();
-            Game1.player.freezePause = WarpFreezeDurationMs;
+            who.Halt();
+            who.freezePause = WarpFreezeDurationMs;
 
+            // Note: Game1.warpFarmer warps the local player (Game1.player), which should
+            // match 'who' since the dialogue callback is triggered by the interacting player.
+            // In split-screen, each player has their own Game1.player context.
             Game1.warpFarmer(
                 destination.MapName,
                 destination.DestinationX,
