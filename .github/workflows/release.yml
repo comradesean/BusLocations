@@ -20,18 +20,31 @@ jobs:
 
       - name: Create game stub for SMAPI build package
         run: |
-          mkdir -p "$HOME/GameStub/Stardew Valley"
-          echo '<?xml version="1.0" encoding="utf-8"?><Project></Project>' > "$HOME/GameStub/Stardew Valley/Stardew Valley.deps.json"
+          # Create fake game directory with required files
+          mkdir -p "/tmp/StardewValley"
+          touch "/tmp/StardewValley/Stardew Valley.dll"
+          touch "/tmp/StardewValley/StardewValley.dll"
+          touch "/tmp/StardewValley/StardewValley.GameData.dll"
+          touch "/tmp/StardewValley/Stardew Valley.exe"
+          mkdir -p "/tmp/StardewValley/smapi-internal"
+          touch "/tmp/StardewValley/smapi-internal/SMAPI.Toolkit.CoreInterfaces.dll"
+          touch "/tmp/StardewValley/smapi-internal/0Harmony.dll"
+
+          # Create stardewvalley.targets to point to stub
+          cat > stardewvalley.targets << 'EOF'
+          <Project>
+            <PropertyGroup>
+              <GamePath>/tmp/StardewValley</GamePath>
+            </PropertyGroup>
+          </Project>
+          EOF
 
       - name: Restore dependencies
         run: dotnet restore
 
       - name: Build
-        env:
-          SMAPI_MODS_PATH: ${{ github.workspace }}/bin
         run: |
           dotnet build --configuration Release --no-restore \
-            -p:GamePath="$HOME/GameStub/Stardew Valley" \
             -p:EnableModDeploy=false \
             -p:EnableModZip=false
 
