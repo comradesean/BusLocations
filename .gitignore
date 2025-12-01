@@ -23,3 +23,9 @@ _ReSharper*/
 **/packages/*
 *.nuget.props
 *.nuget.targets
+
+# Local game path configuration (user-specific)
+stardewvalley.targets
+
+# Claude Code settings
+.claude/

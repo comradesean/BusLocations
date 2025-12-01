@@ -1,0 +1,12 @@
+{
+	"locations": [
+		{
+			"mapname": "Desert",
+			"displayname": "Calico Desert",
+			"destinationX": 18,
+			"destinationY": 28,
+			"arrivalFacing": 2,
+			"ticketPrice": 500
+		}
+	]
+}
