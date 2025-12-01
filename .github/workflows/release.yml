@@ -22,7 +22,11 @@ jobs:
         run: dotnet restore
 
       - name: Build
-        run: dotnet build --configuration Release --no-restore
+        run: |
+          dotnet build --configuration Release --no-restore \
+            -p:GamePath="$GITHUB_WORKSPACE/game-stub" \
+            -p:EnableModDeploy=false \
+            -p:EnableModZip=false
 
       - name: Get version from tag
         id: version
