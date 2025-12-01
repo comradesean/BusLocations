@@ -18,13 +18,20 @@ jobs:
         with:
           dotnet-version: '6.0.x'
 
+      - name: Create game stub for SMAPI build package
+        run: |
+          mkdir -p "$HOME/GameStub/Stardew Valley"
+          echo '<?xml version="1.0" encoding="utf-8"?><Project></Project>' > "$HOME/GameStub/Stardew Valley/Stardew Valley.deps.json"
+
       - name: Restore dependencies
         run: dotnet restore
 
       - name: Build
+        env:
+          SMAPI_MODS_PATH: ${{ github.workspace }}/bin
         run: |
           dotnet build --configuration Release --no-restore \
-            -p:GamePath="$GITHUB_WORKSPACE/game-stub" \
+            -p:GamePath="$HOME/GameStub/Stardew Valley" \
             -p:EnableModDeploy=false \
             -p:EnableModZip=false
 
