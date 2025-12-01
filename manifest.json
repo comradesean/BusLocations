@@ -1,7 +1,7 @@
 ﻿{
-  "Name": "Bus Locations (1.6 fix by Sean)",
-  "Author": "nanzington & Sean",
-  "Version": "2.0.0",
+  "Name": "BusLocations Continued",
+  "Author": "Sean (originally by nanzington)",
+  "Version": "2.1.0",
   "Description": "A framework that lets modders dynamically add new locations for the bus to go to.",
   "UniqueID": "hootless.BusLocations",
   "EntryDll": "BusLocations.dll",
