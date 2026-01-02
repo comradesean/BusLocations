@@ -1,0 +1,7 @@
+{
+    "menu.question": "¿A dónde te gustaría ir?",
+    "menu.cancel": "Cancelar",
+    "message.out-of-service": "Fuera de servicio.",
+    "message.no-driver": "El conductor del autobús no está aquí",
+    "message.no-destinations": "Sin destinos disponibles."
+}
